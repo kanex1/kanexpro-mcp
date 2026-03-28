@@ -241,6 +241,14 @@ async function startHTTP() {
     res.json({ status: 'ok', server: 'kanexpro-api', version: '1.2.0' });
   });
 
+  // OAuth discovery — return proper 404 so Claude.ai knows this is authless
+  app.get('/.well-known/oauth-authorization-server', (_req, res) => {
+    res.status(404).json({ error: 'OAuth not supported — this server is authless' });
+  });
+  app.get('/.well-known/openid-configuration', (_req, res) => {
+    res.status(404).json({ error: 'OAuth not supported — this server is authless' });
+  });
+
   // HEAD — Claude.ai protocol discovery (on both / and /mcp)
   const headHandler = (_req, res) => {
     res.setHeader('MCP-Protocol-Version', '2024-11-05');
@@ -276,6 +284,16 @@ async function startHTTP() {
   app.get('/mcp', methodNotAllowed);
   app.delete('/mcp', methodNotAllowed);
   app.delete('/', methodNotAllowed);
+
+  // GET / — server info (not MCP, just so it doesn't 404)
+  app.get('/', (_req, res) => {
+    res.json({ server: 'kanexpro-api', version: '1.2.0', mcp: '/mcp', health: '/health' });
+  });
+
+  // Catch-all — return JSON 404 instead of HTML (prevents Claude.ai auth confusion)
+  app.use((_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
 
   app.listen(PORT, '0.0.0.0', (err) => {
     if (err) { console.error('Failed to start:', err); process.exit(1); }
