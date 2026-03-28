@@ -89,7 +89,7 @@ function createServer() {
 
   server.tool(
     'cmslookup',
-    'Look up a KanexPro product by SKU via /cmslookup (PRIMARY lookup). No key needed. Returns FLAT JSON: title, subtitle, overview_html, features_html, specs_html, faq_json (parsed array), upc, category, subcategory, msrp, status, photo_url, and file URLs.',
+    'Look up a KanexPro product by SKU via /cmslookup (PRIMARY lookup). No key needed. Returns FLAT JSON: title, subtitle, overview_html, features_html, specs_html, faq_json (parsed array), upc, category, subcategory, msrp, dealer (msrp × 0.6), status, photo_url, and file URLs.',
     {
       sku: z.string().describe('Product MPN / SKU (e.g. AVO-IPJP2K)'),
     },
@@ -100,6 +100,10 @@ function createServer() {
         if (status === 401) return { content: [{ type: 'text', text: `❌ 401 Unauthorized — cmslookup auth error.` }] };
         if (status === 404) return { content: [{ type: 'text', text: `❌ 404 — SKU "${sku}" not found in CMS.` }] };
         if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        // Add dealer price = MSRP × 0.6
+        if (body && typeof body.msrp === 'number') {
+          body.dealer = Math.round(body.msrp * 0.6 * 100) / 100;
+        }
         return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
       } catch (err) {
         return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
