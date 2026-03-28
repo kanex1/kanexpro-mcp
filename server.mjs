@@ -226,13 +226,32 @@ function createServer() {
 async function startHTTP() {
   const app = createMcpExpressApp({ host: '0.0.0.0' });
 
+  // CORS for Claude.ai
+  app.use((_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Session-Id');
+    res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id, MCP-Protocol-Version');
+    if (_req.method === 'OPTIONS') { res.status(204).end(); return; }
+    next();
+  });
+
   // Health check
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', server: 'kanexpro-api', version: '1.2.0' });
   });
 
-  // MCP endpoint — stateless (new server per request)
-  app.post('/mcp', async (req, res) => {
+  // HEAD — Claude.ai protocol discovery (on both / and /mcp)
+  const headHandler = (_req, res) => {
+    res.setHeader('MCP-Protocol-Version', '2024-11-05');
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).end();
+  };
+  app.head('/', headHandler);
+  app.head('/mcp', headHandler);
+
+  // MCP POST handler — stateless (new server per request)
+  const mcpPostHandler = async (req, res) => {
     const server = createServer();
     try {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -245,20 +264,23 @@ async function startHTTP() {
         res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal server error' }, id: null });
       }
     }
-  });
+  };
+  // Serve MCP on both / and /mcp so either URL works as connector
+  app.post('/', mcpPostHandler);
+  app.post('/mcp', mcpPostHandler);
 
-  // Reject GET/DELETE on /mcp per spec
-  app.get('/mcp', (_req, res) => {
+  // Reject GET/DELETE on MCP endpoints per spec
+  const methodNotAllowed = (_req, res) => {
     res.writeHead(405).end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null }));
-  });
-  app.delete('/mcp', (_req, res) => {
-    res.writeHead(405).end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null }));
-  });
+  };
+  app.get('/mcp', methodNotAllowed);
+  app.delete('/mcp', methodNotAllowed);
+  app.delete('/', methodNotAllowed);
 
   app.listen(PORT, '0.0.0.0', (err) => {
     if (err) { console.error('Failed to start:', err); process.exit(1); }
     console.log(`KanexPro MCP Server v1.2.0 — HTTP on port ${PORT}`);
-    console.log(`  MCP endpoint: http://0.0.0.0:${PORT}/mcp`);
+    console.log(`  MCP endpoint: http://0.0.0.0:${PORT}/mcp (or /)`);
     console.log(`  Health check: http://0.0.0.0:${PORT}/health`);
   });
 }
