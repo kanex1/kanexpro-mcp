@@ -1,0 +1,28 @@
+{
+  "name": "kanexpro-mcp",
+  "version": "1.2.0",
+  "description": "KanexPro Product API — MCP Server (cmslookup, list, push, publish)",
+  "type": "module",
+  "main": "server.mjs",
+  "bin": {
+    "kanexpro-mcp": "./server.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "start:stdio": "node server.mjs --stdio"
+  },
+  "keywords": [
+    "mcp",
+    "kanexpro",
+    "av"
+  ],
+  "author": "KanexPro",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "undici": "^7.24.6",
+    "zod": "^4.3.6"
+  }
+}
