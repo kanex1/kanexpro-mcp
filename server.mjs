@@ -111,11 +111,11 @@ function createServer() {
 
   server.tool(
     'list',
-    'List KanexPro products by category/subcategory via /list. Returns {"products":[...]} with SKU, title, subtitle, status, photo_url, file URLs. Note: Diagram uses capital D. MSRP and stock are only included if a valid key is provided.',
+    'List KanexPro products by category/subcategory via /list. Returns {"products":[...]} with SKU, title, subtitle, MSRP, status, photo_url, file URLs. Note: Diagram uses capital D. Cost and stock fields are only included if a valid key is provided.',
     {
       category: z.string().describe('Top-level category (e.g. "AV Over IP")'),
       subcategory: z.string().describe('Subcategory (e.g. "JPEG2000")'),
-      key: z.string().optional().describe('API key — required to see MSRP and stock data'),
+      key: z.string().optional().describe('API key — required to see cost and stock data. MSRP is always visible.'),
     },
     async ({ category, subcategory, key }) => {
       try {
@@ -127,11 +127,11 @@ function createServer() {
         if (products.length === 0) {
           return { content: [{ type: 'text', text: `No products found for "${category}" / "${subcategory}".` }] };
         }
-        // Strip cost/stock fields unless valid key is provided
+        // Strip cost/stock fields unless valid key is provided. MSRP stays visible.
         const authorized = key && key.trim() === '9876';
         if (!authorized) {
           products = products.map(p => {
-            const { msrp, stock, stockEU, ...rest } = p;
+            const { cost, stock, stockEU, ...rest } = p;
             return rest;
           });
         }
