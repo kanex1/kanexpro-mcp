@@ -100,11 +100,16 @@ function createServer() {
         if (status === 401) return { content: [{ type: 'text', text: `❌ 401 Unauthorized — cmslookup auth error.` }] };
         if (status === 404) return { content: [{ type: 'text', text: `❌ 404 — SKU "${sku}" not found in CMS.` }] };
         if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
-        // Add dealer price = MSRP × 0.6
-        if (body && typeof body.msrp === 'number') {
-          body.dealer = Math.round(body.msrp * 0.6 * 100) / 100;
+        // API may return trailing commas — clean and re-parse if body is a string
+        let data = body;
+        if (typeof data === 'string') {
+          try { data = JSON.parse(data.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']')); } catch { /* keep as-is */ }
         }
-        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+        // Add dealer price = MSRP × 0.6
+        if (data && typeof data === 'object' && typeof data.msrp === 'number') {
+          data.dealer = Math.round(data.msrp * 0.6 * 100) / 100;
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (err) {
         return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
       }
@@ -115,7 +120,7 @@ function createServer() {
 
   server.tool(
     'list',
-    'List KanexPro products by category/subcategory via /list. Returns {"products":[...]} with SKU, title, subtitle, MSRP, status, photo_url, file URLs. Note: Diagram uses capital D. Cost and stock fields are only included if a valid key is provided.',
+    'List KanexPro products by category/subcategory via /list. Returns {"products":[...]} with SKU, title, subtitle, MSRP, dealer (MSRP × 0.6), status, photo_url, file URLs. Note: Diagram uses capital D. Stock fields only included with valid key.',
     {
       category: z.string().describe('Top-level category (e.g. "AV Over IP")'),
       subcategory: z.string().describe('Subcategory (e.g. "JPEG2000")'),
@@ -139,6 +144,13 @@ function createServer() {
             return rest;
           });
         }
+        // Add dealer price (MSRP × 0.6) to every product
+        products = products.map(p => {
+          if (typeof p.msrp === 'number') {
+            p.dealer = Math.round(p.msrp * 0.6 * 100) / 100;
+          }
+          return p;
+        });
         return { content: [{ type: 'text', text: JSON.stringify({ products }, null, 2) }] };
       } catch (err) {
         return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
