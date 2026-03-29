@@ -7,8 +7,8 @@
  * Runs as Streamable HTTP (for Claude.ai / remote) or stdio (for Claude Desktop).
  * 
  * Tools:
- *   cmslookup   — Look up a product by SKU (primary lookup — no key needed)
- *   list        — List products by category / subcategory (key required for MSRP)
+ *   lookup      — Look up a product by SKU (primary lookup — no key needed)
+ *   list        — List products by category / subcategory (key required for stock)
  *   push        — Push file or metadata to staging  (⚠️ key required, ask user first)
  *   publish     — Publish file or metadata to prod   (⚠️ key required, ask user first)
  *
@@ -85,11 +85,11 @@ const TYPES = ['sheet','manual','marketing','sales_sheet','diagram','panel','app
 function createServer() {
   const server = new McpServer({ name: 'kanexpro-api', version: '1.2.0' });
 
-  // ── cmslookup ───────────────────────────────────────────────────────────
+  // ── lookup ───────────────────────────────────────────────────────────
 
   server.tool(
-    'cmslookup',
-    'Look up a KanexPro product by SKU via /cmslookup (PRIMARY lookup). No key needed. Returns FLAT JSON: title, subtitle, overview_html, features_html, specs_html, faq_json (parsed array), upc, category, subcategory, msrp, dealer (msrp × 0.6), status, photo_url, and file URLs.',
+    'lookup',
+    'Look up a KanexPro product by SKU (PRIMARY lookup). No key needed. Returns FLAT JSON: title, subtitle, overview_html, features_html, specs_html, faq_json (parsed array), upc, category, subcategory, msrp, dealer (msrp × 0.6), status, photo_url, and file URLs.',
     {
       sku: z.string().describe('Product MPN / SKU (e.g. AVO-IPJP2K)'),
     },
@@ -97,7 +97,7 @@ function createServer() {
       try {
         const url = `${BASE_URL}/api/Claude/cmslookup?sku=${encodeURIComponent(sku)}&key=9876`;
         const { status, body } = await fetchRetry(url);
-        if (status === 401) return { content: [{ type: 'text', text: `❌ 401 Unauthorized — cmslookup auth error.` }] };
+        if (status === 401) return { content: [{ type: 'text', text: `❌ 401 Unauthorized — lookup auth error.` }] };
         if (status === 404) return { content: [{ type: 'text', text: `❌ 404 — SKU "${sku}" not found in CMS.` }] };
         if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
         // API may return trailing commas — clean and re-parse if body is a string
