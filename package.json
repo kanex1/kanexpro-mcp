@@ -1,7 +1,7 @@
 {
   "name": "kanexpro-mcp",
-  "version": "1.2.0",
-  "description": "KanexPro Product API — MCP Server (cmslookup, list, push, publish)",
+  "version": "1.3.0",
+  "description": "KanexPro Product API + Hostinger VPS — MCP Server",
   "type": "module",
   "main": "server.mjs",
   "bin": {

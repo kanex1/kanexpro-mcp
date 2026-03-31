@@ -1,22 +1,39 @@
 #!/usr/bin/env node
 
 /**
- * KanexPro Product API — MCP Server v1.2.0
- * 
- * Remote MCP server exposing the KanexPro CMS API.
+ * KanexPro Product API + Hostinger VPS — MCP Server v1.3.0
+ *
+ * Remote MCP server exposing the KanexPro CMS API and Hostinger VPS management.
  * Runs as Streamable HTTP (for Claude.ai / remote) or stdio (for Claude Desktop).
- * 
- * Tools:
+ *
+ * KanexPro Tools:
  *   lookup      — Look up a product by SKU (primary lookup — no key needed)
  *   list        — List products by category / subcategory (key required for stock)
  *   push        — Push file or metadata to staging  (⚠️ key required, ask user first)
  *   publish     — Publish file or metadata to prod   (⚠️ key required, ask user first)
+ *
+ * Hostinger VPS Tools:
+ *   vps_list            — List all VPS instances
+ *   vps_info            — Get details of a specific VM
+ *   vps_start           — Start a VM
+ *   vps_stop            — Stop a VM
+ *   vps_restart         — Restart a VM
+ *   vps_firewall_list   — List firewalls
+ *   vps_firewall_rules  — Get firewall details and rules
+ *   vps_backups         — List backups for a VM
+ *   vps_create_snapshot — Create a snapshot
+ *   vps_restore_backup  — Restore a VM from backup
+ *   vps_actions         — List actions performed on a VM
+ *   vps_post_install_scripts — List post-install scripts
+ *   vps_create_post_install  — Create a post-install script
+ *   vps_ssh_keys        — List SSH public keys
  *
  * Usage:
  *   node server.mjs              → HTTP on port 3000 (or $PORT)
  *   node server.mjs --stdio      → stdio transport (Claude Desktop)
  *
  * API key is NOT hardcoded — user must provide key for push, publish, and list (to see MSRP).
+ * Hostinger API token must be provided by user for all vps_ tools.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -29,6 +46,7 @@ import { ProxyAgent, fetch as uFetch, Agent } from 'undici';
 // ── Config ──────────────────────────────────────────────────────────────────
 
 const BASE_URL = process.env.KANEXPRO_API_URL || 'https://api.kanexpro.com';
+const HOSTINGER_API = 'https://developers.hostinger.com/api';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 4000;
@@ -78,12 +96,19 @@ function buildFormData(fields, fileField) {
 
 const isPng = (t) => ['diagram','panel','applications','banner','social_square','social_landscape'].includes(t);
 
+// Hostinger API helper — Bearer token auth, JSON responses
+async function hostingerFetch(path, token, options = {}) {
+  const url = `${HOSTINGER_API}${path}`;
+  const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...options.headers };
+  return fetchRetry(url, { ...options, headers });
+}
+
 const TYPES = ['sheet','manual','marketing','sales_sheet','diagram','panel','applications','banner','social_square','social_landscape','metadata'];
 
 // ── Server Factory ──────────────────────────────────────────────────────────
 
 function createServer() {
-  const server = new McpServer({ name: 'kanexpro-api', version: '1.2.0' });
+  const server = new McpServer({ name: 'kanexpro-api', version: '1.3.0' });
 
   // ── lookup ───────────────────────────────────────────────────────────
 
@@ -234,6 +259,481 @@ function createServer() {
     }
   );
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── Hostinger VPS Tools ──────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── vps_list ───────────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_list',
+    'List all Hostinger VPS instances. Returns VM IDs, hostnames, IPs, status, OS, and plan details. Requires Hostinger API token.',
+    {
+      token: z.string().describe('Hostinger API token (Bearer) — ask user to provide it'),
+    },
+    async ({ token }) => {
+      try {
+        const { status, body } = await hostingerFetch('/vps/v1/virtual-machines', token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized — invalid or expired Hostinger API token.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_info ───────────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_info',
+    'Get detailed information about a specific Hostinger VPS. Returns hostname, IP, OS, plan, status, resources, and more.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID (from vps_list)'),
+    },
+    async ({ token, vm_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}`, token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized — invalid Hostinger API token.' }] };
+        if (status === 404) return { content: [{ type: 'text', text: `❌ 404 — VM ${vm_id} not found.` }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_start ──────────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_start',
+    'Start a Hostinger VPS. ⚠️ Ask user for confirmation before calling.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+    },
+    async ({ token, vm_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/start`, token, { method: 'POST' });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 202) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ VM ${vm_id} start initiated — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_stop ───────────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_stop',
+    'Stop a Hostinger VPS. ⚠️ Ask user for confirmation before calling.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+    },
+    async ({ token, vm_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/stop`, token, { method: 'POST' });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 202) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ VM ${vm_id} stop initiated — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_restart ────────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_restart',
+    'Restart a Hostinger VPS. ⚠️ Ask user for confirmation before calling.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+    },
+    async ({ token, vm_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/restart`, token, { method: 'POST' });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 202) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ VM ${vm_id} restart initiated — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_set_hostname ───────────────────────────────────────────────────
+
+  server.tool(
+    'vps_set_hostname',
+    'Set hostname for a Hostinger VPS.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+      hostname: z.string().describe('New hostname for the VM'),
+    },
+    async ({ token, vm_id, hostname }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/hostname`, token, { method: 'PUT', body: JSON.stringify({ hostname }) });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ Hostname set to "${hostname}" — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_set_root_password ──────────────────────────────────────────────
+
+  server.tool(
+    'vps_set_root_password',
+    'Set root password for a Hostinger VPS. ⚠️ Ask user for confirmation before calling.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+      password: z.string().describe('New root password'),
+    },
+    async ({ token, vm_id, password }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/root-password`, token, { method: 'PUT', body: JSON.stringify({ password }) });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ Root password updated — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_actions ────────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_actions',
+    'List actions (operations/events) performed on a Hostinger VPS — start, stop, restart, etc.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+    },
+    async ({ token, vm_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/actions`, token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_metrics ────────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_metrics',
+    'Get historical performance metrics (CPU, RAM, disk, network) for a Hostinger VPS.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+      date_from: z.string().describe('Start date (ISO 8601, e.g. "2025-03-01T00:00:00Z")'),
+      date_to: z.string().describe('End date (ISO 8601, e.g. "2025-03-31T23:59:59Z")'),
+    },
+    async ({ token, vm_id, date_from, date_to }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/metrics?date_from=${encodeURIComponent(date_from)}&date_to=${encodeURIComponent(date_to)}`, token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_firewall_list ──────────────────────────────────────────────────
+
+  server.tool(
+    'vps_firewall_list',
+    'List all Hostinger VPS firewalls.',
+    {
+      token: z.string().describe('Hostinger API token'),
+    },
+    async ({ token }) => {
+      try {
+        const { status, body } = await hostingerFetch('/vps/v1/firewalls', token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_firewall_rules ─────────────────────────────────────────────────
+
+  server.tool(
+    'vps_firewall_rules',
+    'Get a specific Hostinger firewall and its rules by ID.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      firewall_id: z.number().describe('Firewall ID (from vps_firewall_list)'),
+    },
+    async ({ token, firewall_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/firewalls/${firewall_id}`, token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status === 404) return { content: [{ type: 'text', text: `❌ 404 — Firewall ${firewall_id} not found.` }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_firewall_activate ──────────────────────────────────────────────
+
+  server.tool(
+    'vps_firewall_activate',
+    'Activate a firewall on a Hostinger VPS. Only one firewall can be active per VM. ⚠️ Ask user for confirmation.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+      firewall_id: z.number().describe('Firewall ID to activate'),
+    },
+    async ({ token, vm_id, firewall_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/firewalls/${firewall_id}/activate/${vm_id}`, token, { method: 'POST' });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 202) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ Firewall ${firewall_id} activated on VM ${vm_id} — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_backups ────────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_backups',
+    'List backups for a Hostinger VPS.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+    },
+    async ({ token, vm_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/backups`, token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_create_snapshot ────────────────────────────────────────────────
+
+  server.tool(
+    'vps_create_snapshot',
+    'Create a snapshot of a Hostinger VPS. ⚠️ Ask user for confirmation.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+    },
+    async ({ token, vm_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/snapshot`, token, { method: 'POST' });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 202) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ Snapshot created for VM ${vm_id} — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_restore_backup ─────────────────────────────────────────────────
+
+  server.tool(
+    'vps_restore_backup',
+    'Restore a Hostinger VPS from a backup. ⚠️ DESTRUCTIVE — ask user for confirmation.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+      backup_id: z.number().describe('Backup ID (from vps_backups)'),
+    },
+    async ({ token, vm_id, backup_id }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/backups/${backup_id}/restore`, token, { method: 'POST' });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 202) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ Restore initiated for VM ${vm_id} from backup ${backup_id} — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_post_install_scripts ───────────────────────────────────────────
+
+  server.tool(
+    'vps_post_install_scripts',
+    'List all post-install scripts in your Hostinger account. These are shell scripts that run after VPS setup.',
+    {
+      token: z.string().describe('Hostinger API token'),
+    },
+    async ({ token }) => {
+      try {
+        const { status, body } = await hostingerFetch('/vps/v1/post-install-scripts', token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_create_post_install ────────────────────────────────────────────
+
+  server.tool(
+    'vps_create_post_install',
+    'Create a new post-install script. Saved as /post_install on the VPS and executed with root privileges after OS install. Output goes to /post_install.log. Max 48KB. ⚠️ Ask user for confirmation.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      name: z.string().describe('Script name (for identification)'),
+      content: z.string().describe('Shell script content (include #!/bin/bash shebang)'),
+    },
+    async ({ token, name, content }) => {
+      try {
+        const { status, body } = await hostingerFetch('/vps/v1/post-install-scripts', token, { method: 'POST', body: JSON.stringify({ name, content }) });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 201) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ Post-install script "${name}" created — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_ssh_keys ───────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_ssh_keys',
+    'List all SSH public keys in your Hostinger account.',
+    {
+      token: z.string().describe('Hostinger API token'),
+    },
+    async ({ token }) => {
+      try {
+        const { status, body } = await hostingerFetch('/vps/v1/public-keys', token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_attach_ssh_key ─────────────────────────────────────────────────
+
+  server.tool(
+    'vps_attach_ssh_key',
+    'Attach an SSH public key to a Hostinger VPS for key-based authentication.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+      key_ids: z.array(z.number()).describe('Array of public key IDs to attach (from vps_ssh_keys)'),
+    },
+    async ({ token, vm_id, key_ids }) => {
+      try {
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/public-keys`, token, { method: 'POST', body: JSON.stringify({ ids: key_ids }) });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 202) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ SSH keys attached to VM ${vm_id} — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_os_templates ───────────────────────────────────────────────────
+
+  server.tool(
+    'vps_os_templates',
+    'List available OS templates for Hostinger VPS (Ubuntu, Debian, CentOS, etc.).',
+    {
+      token: z.string().describe('Hostinger API token'),
+    },
+    async ({ token }) => {
+      try {
+        const { status, body } = await hostingerFetch('/vps/v1/templates', token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_data_centers ───────────────────────────────────────────────────
+
+  server.tool(
+    'vps_data_centers',
+    'List available Hostinger data centers for VPS deployment.',
+    {
+      token: z.string().describe('Hostinger API token'),
+    },
+    async ({ token }) => {
+      try {
+        const { status, body } = await hostingerFetch('/vps/v1/data-centers', token);
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── vps_recreate ───────────────────────────────────────────────────────
+
+  server.tool(
+    'vps_recreate',
+    'Recreate (reinstall OS) a Hostinger VPS. ⚠️ DESTRUCTIVE — all data will be lost. Ask user for confirmation AND key.',
+    {
+      token: z.string().describe('Hostinger API token'),
+      vm_id: z.number().describe('Virtual machine ID'),
+      template_id: z.number().describe('OS template ID (from vps_os_templates)'),
+      password: z.string().describe('New root password'),
+      post_install_script_id: z.number().optional().describe('Optional post-install script ID to run after setup'),
+    },
+    async ({ token, vm_id, template_id, password, post_install_script_id }) => {
+      try {
+        const payload = { template_id, password };
+        if (post_install_script_id) payload.post_install_script_id = post_install_script_id;
+        const { status, body } = await hostingerFetch(`/vps/v1/virtual-machines/${vm_id}/recreate`, token, { method: 'POST', body: JSON.stringify(payload) });
+        if (status === 401) return { content: [{ type: 'text', text: '❌ 401 Unauthorized.' }] };
+        if (status !== 200 && status !== 202) return { content: [{ type: 'text', text: `❌ HTTP ${status} — ${JSON.stringify(body)}` }] };
+        return { content: [{ type: 'text', text: `✅ VM ${vm_id} recreate initiated — ${JSON.stringify(body)}` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
+      }
+    }
+  );
+
   return server;
 }
 
@@ -254,7 +754,7 @@ async function startHTTP() {
 
   // Health check
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', server: 'kanexpro-api', version: '1.2.0' });
+    res.json({ status: 'ok', server: 'kanexpro-api', version: '1.3.0' });
   });
 
   // OAuth discovery — return proper 404 so Claude.ai knows this is authless
@@ -303,7 +803,7 @@ async function startHTTP() {
 
   // GET / — server info (not MCP, just so it doesn't 404)
   app.get('/', (_req, res) => {
-    res.json({ server: 'kanexpro-api', version: '1.2.0', mcp: '/mcp', health: '/health' });
+    res.json({ server: 'kanexpro-api', version: '1.3.0', mcp: '/mcp', health: '/health' });
   });
 
   // Catch-all — return JSON 404 instead of HTML (prevents Claude.ai auth confusion)
@@ -313,7 +813,7 @@ async function startHTTP() {
 
   app.listen(PORT, '0.0.0.0', (err) => {
     if (err) { console.error('Failed to start:', err); process.exit(1); }
-    console.log(`KanexPro MCP Server v1.2.0 — HTTP on port ${PORT}`);
+    console.log(`KanexPro MCP Server v1.3.0 — HTTP on port ${PORT}`);
     console.log(`  MCP endpoint: http://0.0.0.0:${PORT}/mcp (or /)`);
     console.log(`  Health check: http://0.0.0.0:${PORT}/health`);
   });
@@ -325,7 +825,7 @@ async function startStdio() {
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('KanexPro MCP Server v1.2.0 — stdio');
+  console.error('KanexPro MCP Server v1.3.0 — stdio');
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
