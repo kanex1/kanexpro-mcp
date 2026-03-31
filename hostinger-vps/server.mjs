@@ -54,6 +54,7 @@ import { readFileSync } from 'fs';
 
 const HOSTINGER_API = 'https://developers.hostinger.com/api';
 const PORT = parseInt(process.env.PORT || '3001', 10);
+const MCP_AUTH_TOKEN = process.env.MCP_AUTH_TOKEN;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 4000;
 const USE_STDIO = process.argv.includes('--stdio');
@@ -661,14 +662,28 @@ function createServer() {
 async function startHTTP() {
   const app = createMcpExpressApp({ host: '0.0.0.0' });
 
+  // CORS
   app.use((_req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Session-Id');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, Mcp-Session-Id');
     res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id, MCP-Protocol-Version');
     if (_req.method === 'OPTIONS') { res.status(204).end(); return; }
     next();
   });
+
+  // Bearer token auth — blocks all requests without valid token
+  if (MCP_AUTH_TOKEN) {
+    app.use((req, res, next) => {
+      // Allow health check without auth
+      if (req.path === '/health') return next();
+      const auth = req.headers['authorization'];
+      if (!auth || auth !== `Bearer ${MCP_AUTH_TOKEN}`) {
+        return res.status(401).json({ error: 'Unauthorized — invalid or missing Bearer token' });
+      }
+      next();
+    });
+  }
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', server: 'hostinger-vps', version: '1.0.0' });
