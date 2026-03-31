@@ -738,19 +738,33 @@ function createServer() {
 
   // ── vps_terminal ────────────────────────────────────────────────────────
   // SSH into the VPS and execute a shell command. Returns stdout + stderr.
+  // Private key is read from env var HOSTINGER_SSH_KEY or file HOSTINGER_SSH_KEY_FILE.
 
   server.tool(
     'vps_terminal',
-    'Execute a shell command on a Hostinger VPS via SSH. Returns stdout and stderr. Requires the VPS IP/hostname and an SSH private key. Commands run as root. ⚠️ Ask user for confirmation before running destructive commands.',
+    'Execute a shell command on a Hostinger VPS via SSH. Returns stdout and stderr. SSH private key is read from env var HOSTINGER_SSH_KEY (the key contents) or HOSTINGER_SSH_KEY_FILE (path to key file). Commands run as root by default. ⚠️ Ask user for confirmation before running destructive commands.',
     {
       host: z.string().describe('VPS IP address or hostname'),
-      ssh_key: z.string().describe('SSH private key (PEM format) for authentication'),
       command: z.string().describe('Shell command to execute on the VPS'),
       username: z.string().optional().describe('SSH username (default: root)'),
       port: z.number().optional().describe('SSH port (default: 22)'),
       timeout: z.number().optional().describe('Command timeout in seconds (default: 30)'),
     },
-    async ({ host, ssh_key, command, username, port, timeout }) => {
+    async ({ host, command, username, port, timeout }) => {
+      // Resolve private key from env
+      let privateKey = process.env.HOSTINGER_SSH_KEY;
+      if (!privateKey && process.env.HOSTINGER_SSH_KEY_FILE) {
+        try {
+          const { readFileSync } = await import('fs');
+          privateKey = readFileSync(process.env.HOSTINGER_SSH_KEY_FILE, 'utf-8');
+        } catch (err) {
+          return { content: [{ type: 'text', text: `❌ Cannot read SSH key file: ${err.message}` }] };
+        }
+      }
+      if (!privateKey) {
+        return { content: [{ type: 'text', text: '❌ No SSH key found. Set HOSTINGER_SSH_KEY (key contents) or HOSTINGER_SSH_KEY_FILE (path to key file) as an environment variable.' }] };
+      }
+
       const sshUser = username || 'root';
       const sshPort = port || 22;
       const cmdTimeout = (timeout || 30) * 1000;
@@ -806,7 +820,7 @@ function createServer() {
           host,
           port: sshPort,
           username: sshUser,
-          privateKey: ssh_key,
+          privateKey,
         });
       });
     }

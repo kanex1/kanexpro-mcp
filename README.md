@@ -112,6 +112,8 @@ PORT=8080 node server.mjs
 | `PORT` | `3000` | HTTP server port |
 | `KANEXPRO_API_URL` | `https://api.kanexpro.com` | API base URL |
 | `HTTPS_PROXY` | *(auto)* | Egress proxy URL |
+| `HOSTINGER_SSH_KEY` | — | SSH private key contents for `vps_terminal` |
+| `HOSTINGER_SSH_KEY_FILE` | — | Path to SSH private key file (alternative to above) |
 
 ## Test
 
