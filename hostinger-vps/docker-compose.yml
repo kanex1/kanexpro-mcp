@@ -1,0 +1,16 @@
+services:
+  hostinger-vps-mcp:
+    build: .
+    container_name: hostinger-vps-mcp
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - PORT=3001
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - HOSTINGER_SSH_KEY_FILE=/run/secrets/ssh_key
+    secrets:
+      - ssh_key
+
+secrets:
+  ssh_key:
+    file: ~/.ssh/hostinger_key
