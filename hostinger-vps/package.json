@@ -1,0 +1,30 @@
+{
+  "name": "hostinger-vps-mcp",
+  "version": "1.0.0",
+  "description": "Hostinger VPS MCP Server — terminal, management, firewall, backups",
+  "type": "module",
+  "main": "server.mjs",
+  "bin": {
+    "hostinger-vps-mcp": "./server.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "start:stdio": "node server.mjs --stdio"
+  },
+  "keywords": [
+    "mcp",
+    "hostinger",
+    "vps",
+    "ssh",
+    "trading-bot"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "ssh2": "^1.16.0",
+    "undici": "^7.24.6",
+    "zod": "^4.3.6"
+  }
+}
