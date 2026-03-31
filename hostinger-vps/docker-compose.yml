@@ -1,0 +1,18 @@
+services:
+  hostinger-vps-mcp:
+    build: .
+    container_name: hostinger-vps-mcp
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - HOSTINGER_SSH_KEY_FILE=/run/secrets/ssh_key
+    secrets:
+      - ssh_key
+    # To SSH into the host VPS from inside the container,
+    # use the host's IP or host.docker.internal
+
+secrets:
+  ssh_key:
+    file: ~/.ssh/hostinger_key
