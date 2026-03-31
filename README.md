@@ -45,6 +45,7 @@ All VPS tools require a Hostinger API token ([get one here](https://developers.h
 | `vps_os_templates` | GET | List available OS templates |
 | `vps_data_centers` | GET | List available data centers |
 | `vps_recreate` | POST | Reinstall OS on a VM (destructive) |
+| `vps_terminal` | SSH | Execute shell commands on VPS via SSH |
 
 ## Quick Start
 

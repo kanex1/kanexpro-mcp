@@ -27,6 +27,7 @@
  *   vps_post_install_scripts — List post-install scripts
  *   vps_create_post_install  — Create a post-install script
  *   vps_ssh_keys        — List SSH public keys
+ *   vps_terminal        — Execute shell commands on VPS via SSH
  *
  * Usage:
  *   node server.mjs              → HTTP on port 3000 (or $PORT)
@@ -42,6 +43,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import { z } from 'zod';
 import { ProxyAgent, fetch as uFetch, Agent } from 'undici';
+import { Client as SSHClient } from 'ssh2';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -731,6 +733,82 @@ function createServer() {
       } catch (err) {
         return { content: [{ type: 'text', text: `❌ Network error: ${err.message}` }] };
       }
+    }
+  );
+
+  // ── vps_terminal ────────────────────────────────────────────────────────
+  // SSH into the VPS and execute a shell command. Returns stdout + stderr.
+
+  server.tool(
+    'vps_terminal',
+    'Execute a shell command on a Hostinger VPS via SSH. Returns stdout and stderr. Requires the VPS IP/hostname and an SSH private key. Commands run as root. ⚠️ Ask user for confirmation before running destructive commands.',
+    {
+      host: z.string().describe('VPS IP address or hostname'),
+      ssh_key: z.string().describe('SSH private key (PEM format) for authentication'),
+      command: z.string().describe('Shell command to execute on the VPS'),
+      username: z.string().optional().describe('SSH username (default: root)'),
+      port: z.number().optional().describe('SSH port (default: 22)'),
+      timeout: z.number().optional().describe('Command timeout in seconds (default: 30)'),
+    },
+    async ({ host, ssh_key, command, username, port, timeout }) => {
+      const sshUser = username || 'root';
+      const sshPort = port || 22;
+      const cmdTimeout = (timeout || 30) * 1000;
+
+      return new Promise((resolve) => {
+        const conn = new SSHClient();
+        let stdout = '';
+        let stderr = '';
+        let finished = false;
+
+        const timer = setTimeout(() => {
+          if (!finished) {
+            finished = true;
+            conn.end();
+            resolve({ content: [{ type: 'text', text: `❌ Command timed out after ${cmdTimeout / 1000}s.\n\nPartial stdout:\n${stdout}\n\nPartial stderr:\n${stderr}` }] });
+          }
+        }, cmdTimeout);
+
+        conn.on('ready', () => {
+          conn.exec(command, (err, stream) => {
+            if (err) {
+              clearTimeout(timer);
+              finished = true;
+              conn.end();
+              resolve({ content: [{ type: 'text', text: `❌ SSH exec error: ${err.message}` }] });
+              return;
+            }
+            stream.on('data', (data) => { stdout += data.toString(); });
+            stream.stderr.on('data', (data) => { stderr += data.toString(); });
+            stream.on('close', (code) => {
+              if (finished) return;
+              clearTimeout(timer);
+              finished = true;
+              conn.end();
+              let result = '';
+              if (stdout.trim()) result += stdout.trim();
+              if (stderr.trim()) result += (result ? '\n\n--- stderr ---\n' : '') + stderr.trim();
+              if (!result) result = `(no output — exit code ${code})`;
+              result = `Exit code: ${code}\n\n${result}`;
+              resolve({ content: [{ type: 'text', text: result }] });
+            });
+          });
+        });
+
+        conn.on('error', (err) => {
+          if (finished) return;
+          clearTimeout(timer);
+          finished = true;
+          resolve({ content: [{ type: 'text', text: `❌ SSH connection error: ${err.message}` }] });
+        });
+
+        conn.connect({
+          host,
+          port: sshPort,
+          username: sshUser,
+          privateKey: ssh_key,
+        });
+      });
     }
   );
 
